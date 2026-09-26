@@ -1,45 +1,20 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import styles from './App.module.css';
-
-// Временные заглушки для страниц (будут заменены на настоящие компоненты)
-const DashboardPlaceholder = () => <div style={{ padding: '2rem' }}>Dashboard</div>;
-const HistoryPlaceholder = () => <div style={{ padding: '2rem' }}>History</div>;
-const AnalyticsPlaceholder = () => <div style={{ padding: '2rem' }}>Analytics</div>;
-
-// Временная заглушка для Layout (будет заменена на настоящий компонент)
-const LayoutPlaceholder = ({ children }) => <>{children}</>;
+import React from "react";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import Layout from "./components/Layout/Layout";
+import Dashboard from "./pages/Dashboard/Dashboard";
+import History from "./pages/History/History";
+import Analytics from "./pages/Analytics/Analytics";
 
 function App() {
   return (
     <BrowserRouter>
-      <div className={styles.app}>
+      <Layout>
         <Routes>
-          <Route 
-            path="/" 
-            element={
-              <LayoutPlaceholder>
-                <DashboardPlaceholder />
-              </LayoutPlaceholder>
-            } 
-          />
-          <Route 
-            path="/history" 
-            element={
-              <LayoutPlaceholder>
-                <HistoryPlaceholder />
-              </LayoutPlaceholder>
-            } 
-          />
-          <Route 
-            path="/analytics" 
-            element={
-              <LayoutPlaceholder>
-                <AnalyticsPlaceholder />
-              </LayoutPlaceholder>
-            } 
-          />
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/history" element={<History />} />
+          <Route path="/analytics" element={<Analytics />} />
         </Routes>
-      </div>
+      </Layout>
     </BrowserRouter>
   );
 }
