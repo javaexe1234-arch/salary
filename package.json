@@ -1,25 +1,30 @@
+cat > package.json << 'EOF'
 {
-  "name": "salary-tracker",
-  "private": true,
-  "version": "0.0.0",
+  "name": "salary-tracker-backend",
+  "version": "1.0.0",
+  "description": "REST API для Salary Tracker на Node.js + Express + SQLite",
   "type": "module",
+  "main": "index.js",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "lint": "oxlint",
-    "preview": "vite preview"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
+  "keywords": [
+    "salary-tracker",
+    "express",
+    "sqlite",
+    "rest-api"
+  ],
+  "author": "",
+  "license": "ISC",
   "dependencies": {
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "react-router-dom": "^7.18.4",
-    "recharts": "^3.10.1"
+    "better-sqlite3": "^11.3.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "uuid": "^10.0.0"
   },
   "devDependencies": {
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.7",
-    "@vitejs/plugin-react": "^6.1.1",
-    "oxlint": "^1.81.0",
-    "vite": "^8.3.0"
+    "nodemon": "^3.1.7"
   }
 }
+EOF
