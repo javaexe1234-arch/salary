@@ -1,9 +1,21 @@
 // Базовый URL API
-export const API_BASE_URL =
-  import.meta.env.VITE_API_URL ||
-  (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-    ? 'https://salary-three-pearl.vercel.app/api/v1'
-    : '/api/v1');
+const rawApiUrl = import.meta.env.VITE_API_URL;
+function getBaseUrl() {
+  if (rawApiUrl) {
+    return rawApiUrl.endsWith('/api/v1')
+      ? rawApiUrl
+      : `${rawApiUrl.replace(/\/+$/, '')}/api/v1`;
+  }
+  if (
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ) {
+    return 'http://localhost:3001/api/v1';
+  }
+  return '/api/v1';
+}
+
+export const API_BASE_URL = getBaseUrl();
 
 /**
  * Получить токен из localStorage

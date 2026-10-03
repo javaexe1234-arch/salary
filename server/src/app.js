@@ -31,15 +31,15 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Регистрируем роуты API под префиксом /api/v1/
+// Регистрируем роуты API под префиксом /api/v1/ и прямыми путями
 // Публичные роуты аутентификации (без защиты)
-app.use('/api/v1/auth', authRouter);
+app.use(['/api/v1/auth', '/auth'], authRouter);
 
 // Защищённые роуты (требуют JWT-токен)
-app.use('/api/v1/incomes', authenticate, incomesRouter);
-app.use('/api/v1/expenses', authenticate, expensesRouter);
-app.use('/api/v1/summary', authenticate, summaryRouter);
-app.use('/api/v1/export', authenticate, exportRouter);
+app.use(['/api/v1/incomes', '/incomes'], authenticate, incomesRouter);
+app.use(['/api/v1/expenses', '/expenses'], authenticate, expensesRouter);
+app.use(['/api/v1/summary', '/summary'], authenticate, summaryRouter);
+app.use(['/api/v1/export', '/export'], authenticate, exportRouter);
 
 // Обработчик для несуществующих маршрутов (404)
 app.use(notFoundHandler);
