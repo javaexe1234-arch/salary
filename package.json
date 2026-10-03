@@ -1,0 +1,21 @@
+{
+  "name": "salary-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "cd client && npm install && npm run build",
+    "dev": "npm run dev --prefix client",
+    "client:dev": "npm run dev --prefix client",
+    "server:dev": "npm run dev --prefix server",
+    "server:start": "npm start --prefix server",
+    "db:init": "node -e \"import('./server/src/db/connection.js').then(m => m.initDb())\""
+  },
+  "dependencies": {
+    "@libsql/client": "^0.15.0",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "express": "^4.18.3",
+    "jsonwebtoken": "^9.0.3"
+  }
+}
