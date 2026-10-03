@@ -1,115 +1,93 @@
-import { INCOME_CATEGORY_IDS, EXPENSE_CATEGORY_IDS } from '../utils/categories.js';
-import { createError } from './errorHandler.js';
+import { getIncomeCategoryIds, getExpenseCategoryIds } from '../utils/categories.js';
 
-export const validateTransaction = (data, type = 'expense') => {
-  if (!data || typeof data !== 'object') {
-    throw createError('Данные операции не переданы', 400, 'VALIDATION_ERROR');
+/**
+ * Валидация данных операции (доход или расход)
+ * @param {Object} data - данные для валидации
+ * @param {string} type - тип операции ('income' или 'expense')
+ * @returns {Object} объект с результатом { valid: boolean, errors: Array<string> }
+ */
+export function validateTransaction(data, type = 'expense') {
+  const errors = [];
+
+  // Проверка amount
+  if (data.amount === undefined || data.amount === null) {
+    errors.push('Поле amount обязательно');
+  } else if (typeof data.amount !== 'number' || data.amount <= 0) {
+    errors.push('Поле amount должно быть положительным числом');
   }
 
-  const amount = Number(data.amount);
-  if (isNaN(amount) || amount <= 0) {
-    throw createError('Сумма должна быть числом больше 0', 400, 'VALIDATION_ERROR');
+  // Проверка date
+  if (!data.date) {
+    errors.push('Поле date обязательно');
+  } else if (!isValidDate(data.date)) {
+    errors.push('Поле date должно быть в формате YYYY-MM-DD');
   }
 
-  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-  if (!data.date || !dateRegex.test(data.date)) {
-    throw createError('Дата должна быть в формате YYYY-MM-DD', 400, 'VALIDATION_ERROR');
+  // Проверка category
+  if (!data.category) {
+    errors.push('Поле category обязательно');
+  } else {
+    const validCategories = type === 'income'
+      ? getIncomeCategoryIds()
+      : getExpenseCategoryIds();
+
+    if (!validCategories.includes(data.category)) {
+      errors.push(`Недопустимая категория: ${data.category}`);
+    }
   }
 
-  const dateObj = new Date(data.date);
-  if (isNaN(dateObj.getTime())) {
-    throw createError('Некорректная дата', 400, 'VALIDATION_ERROR');
+  // Проверка comment (необязательное поле, но если есть - должно быть строкой)
+  if (data.comment !== undefined && data.comment !== null && typeof data.comment !== 'string') {
+    errors.push('Поле comment должно быть строкой');
   }
 
-  const validCategories = type === 'income' ? INCOME_CATEGORY_IDS : EXPENSE_CATEGORY_IDS;
-  if (!data.category || !validCategories.includes(data.category)) {
-    throw createError(
-      `Некорректная категория. Допустимые значения: ${validCategories.join(', ')}`,
-      400,
-      'VALIDATION_ERROR'
-    );
-  }
-
-  if (data.comment !== undefined && typeof data.comment !== 'string') {
-    throw createError('Комментарий должен быть строкой', 400, 'VALIDATION_ERROR');
-  }
-
+  // Проверка is_recurring (только для расходов)
   if (type === 'expense' && data.is_recurring !== undefined) {
     if (typeof data.is_recurring !== 'boolean' && data.is_recurring !== 0 && data.is_recurring !== 1) {
-      throw createError('is_recurring должен быть boolean или 0/1', 400, 'VALIDATION_ERROR');
+      errors.push('Поле is_recurring должно быть boolean или 0/1');
     }
   }
-};
 
-export const validateIncome = (req, res, next) => {
-  try {
-    validateTransaction(req.body, 'income');
+  return {
+    valid: errors.length === 0,
+    errors: errors,
+  };
+}
+
+/**
+ * Проверка корректности даты в формате YYYY-MM-DD
+ * @param {string} dateString - строка даты
+ * @returns {boolean} true, если дата корректна
+ */
+function isValidDate(dateString) {
+  // Регулярное выражение для формата YYYY-MM-DD
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+
+  if (!dateRegex.test(dateString)) {
+    return false;
+  }
+
+  // Проверяем, что дата реально существует
+  const date = new Date(dateString);
+  return date instanceof Date && !isNaN(date);
+}
+
+/**
+ * Middleware для валидации тела запроса
+ * @param {string} type - тип операции ('income' или 'expense')
+ * @returns {Function} Express middleware
+ */
+export function validateTransactionMiddleware(type = 'expense') {
+  return (req, res, next) => {
+    const validation = validateTransaction(req.body, type);
+
+    if (!validation.valid) {
+      const error = new Error('Ошибка валидации: ' + validation.errors.join(', '));
+      error.statusCode = 400;
+      error.code = 'VALIDATION_ERROR';
+      return next(error);
+    }
+
     next();
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const validateExpense = (req, res, next) => {
-  try {
-    validateTransaction(req.body, 'expense');
-    next();
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const validateId = (id) => {
-  if (!id || typeof id !== 'string' || id.trim() === '') {
-    throw createError('ID должен быть непустой строкой', 400, 'VALIDATION_ERROR');
-  }
-};
-
-export const validateIdParam = (req, res, next) => {
-  try {
-    validateId(req.params.id);
-    next();
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const validatePagination = (query) => {
-  const page = Math.max(1, parseInt(query.page) || 1);
-  const limit = Math.min(100, Math.max(1, parseInt(query.limit) || 50));
-  return { page, limit };
-};
-
-export const validateFilters = (query, type = 'expense') => {
-  const filters = {};
-
-  if (query.category) {
-    const validCategories = type === 'income' ? INCOME_CATEGORY_IDS : EXPENSE_CATEGORY_IDS;
-    if (!validCategories.includes(query.category)) {
-      throw createError(
-        `Некорректная категория. Допустимые значения: ${validCategories.join(', ')}`,
-        400,
-        'VALIDATION_ERROR'
-      );
-    }
-    filters.category = query.category;
-  }
-
-  if (query.dateFrom) {
-    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-    if (!dateRegex.test(query.dateFrom)) {
-      throw createError('dateFrom должна быть в формате YYYY-MM-DD', 400, 'VALIDATION_ERROR');
-    }
-    filters.dateFrom = query.dateFrom;
-  }
-
-  if (query.dateTo) {
-    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-    if (!dateRegex.test(query.dateTo)) {
-      throw createError('dateTo должна быть в формате YYYY-MM-DD', 400, 'VALIDATION_ERROR');
-    }
-    filters.dateTo = query.dateTo;
-  }
-
-  return filters;
-};
+  };
+}

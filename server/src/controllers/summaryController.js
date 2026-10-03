@@ -1,79 +1,43 @@
 import * as summaryService from '../services/summaryService.js';
-import { createError } from '../middleware/errorHandler.js';
 
 /**
- * Получить общий баланс (сумма доходов, расходов и разница)
+ * Получить общий баланс текущего пользователя
  * GET /api/v1/summary/balance
  */
-export const getBalance = (req, res, next) => {
+export async function getBalance(req, res, next) {
   try {
-    const balance = summaryService.getBalance();
-    
-    res.status(200).json({
-      data: balance,
-    });
+    const userId = req.user.id;
+    const balance = await summaryService.getBalance(userId);
+    res.json(balance);
   } catch (error) {
     next(error);
   }
-};
+}
 
 /**
- * Получить сумму операций, сгруппированную по категориям
- * GET /api/v1/summary/by-category?type=expense&dateFrom=2026-01-01&dateTo=2026-12-31
+ * Получить сумму по категориям для текущего пользователя
+ * GET /api/v1/summary/by-category
  */
-export const getByCategory = (req, res, next) => {
+export async function getByCategory(req, res, next) {
   try {
-    // Тип операции: 'income' или 'expense' (по умолчанию 'expense')
-    const type = req.query.type || 'expense';
-    
-    // Валидация типа
-    if (type !== 'income' && type !== 'expense') {
-      throw createError(
-        'Параметр type должен быть "income" или "expense"',
-        400,
-        'VALIDATION_ERROR'
-      );
-    }
-
-    // Опциональные фильтры по датам
-    const filters = {};
-    if (req.query.dateFrom) filters.dateFrom = req.query.dateFrom;
-    if (req.query.dateTo) filters.dateTo = req.query.dateTo;
-
-    const data = summaryService.getByCategory(type, filters);
-
-    res.status(200).json({
-      data,
-      meta: {
-        type,
-        filters,
-      },
-    });
+    const userId = req.user.id;
+    const data = await summaryService.getByCategory(userId, req.query);
+    res.json(data);
   } catch (error) {
     next(error);
   }
-};
+}
 
 /**
- * Получить помесячную статистику доходов и расходов
- * GET /api/v1/summary/by-month?dateFrom=2026-01-01&dateTo=2026-12-31
+ * Получить помесячную статистику для текущего пользователя
+ * GET /api/v1/summary/by-month
  */
-export const getByMonth = (req, res, next) => {
+export async function getMonthlySummary(req, res, next) {
   try {
-    // Опциональные фильтры по датам
-    const filters = {};
-    if (req.query.dateFrom) filters.dateFrom = req.query.dateFrom;
-    if (req.query.dateTo) filters.dateTo = req.query.dateTo;
-
-    const data = summaryService.getByMonth(filters);
-
-    res.status(200).json({
-      data,
-      meta: {
-        filters,
-      },
-    });
+    const userId = req.user.id;
+    const data = await summaryService.getMonthlySummary(userId, req.query);
+    res.json(data);
   } catch (error) {
     next(error);
   }
-};
+}

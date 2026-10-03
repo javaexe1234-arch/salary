@@ -1,161 +1,168 @@
-import db from '../db/connection.js';
-import { randomUUID } from 'crypto';
-import { createError } from '../middleware/errorHandler.js';
+import crypto from 'crypto';
+import { getDb } from '../db/connection.js';
 
 /**
- * Получить список расходов с пагинацией и фильтрацией
- * @param {Object} options - { page, limit, category, dateFrom, dateTo, isRecurring }
- * @returns {Object} { data: Array, total: number, page: number, limit: number }
+ * Преобразует строку базы данных (snake_case) в объект (camelCase)
+ * @param {Object} row - строка из БД
+ * @returns {Object} объект в camelCase
  */
-export const getAllExpenses = (options = {}) => {
-  const { page = 1, limit = 50, category, dateFrom, dateTo, isRecurring } = options;
-  const offset = (page - 1) * limit;
-
-  // Формируем условия WHERE динамически
-  const conditions = [];
-  const params = [];
-
-  if (category) {
-    conditions.push('category = ?');
-    params.push(category);
-  }
-  if (dateFrom) {
-    conditions.push('date >= ?');
-    params.push(dateFrom);
-  }
-  if (dateTo) {
-    conditions.push('date <= ?');
-    params.push(dateTo);
-  }
-  if (isRecurring !== undefined) {
-    // Приводим к 0/1 для SQLite
-    conditions.push('is_recurring = ?');
-    params.push(isRecurring ? 1 : 0);
-  }
-
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-  // Запрос для получения общего количества записей
-  const countQuery = `SELECT COUNT(*) as total FROM expenses ${whereClause}`;
-  const countResult = db.prepare(countQuery).get(...params);
-  const total = countResult.total;
-
-  // Запрос для получения данных с пагинацией
-  const dataQuery = `
-    SELECT id, amount, date, category, comment, is_recurring, created_at, updated_at 
-    FROM expenses 
-    ${whereClause} 
-    ORDER BY date DESC, created_at DESC 
-    LIMIT ? OFFSET ?
-  `;
-  
-  const rows = db.prepare(dataQuery).all(...params, limit, offset);
-
-  // Маппинг snake_case -> camelCase
-  const data = rows.map(row => ({
-    id: row.id,
-    amount: Number(row.amount),
-    date: row.date,
-    category: row.category,
-    comment: row.comment || '',
-    isRecurring: Boolean(row.is_recurring),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }));
-
-  return { data, total, page: Number(page), limit: Number(limit) };
-};
-
-/**
- * Получить расход по ID
- * @param {string} id - идентификатор расхода
- * @returns {Object|null} объект расхода или null
- */
-export const getExpenseById = (id) => {
-  const row = db.prepare(
-    'SELECT id, amount, date, category, comment, is_recurring, created_at, updated_at FROM expenses WHERE id = ?'
-  ).get(id);
-  
+function mapRowToExpense(row) {
   if (!row) return null;
-
   return {
     id: row.id,
-    amount: Number(row.amount),
+    type: 'expense',
+    amount: row.amount,
     date: row.date,
     category: row.category,
-    comment: row.comment || '',
+    comment: row.comment,
     isRecurring: Boolean(row.is_recurring),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
-};
+}
 
 /**
- * Создать новый расход
- * @param {Object} expenseData - { amount, date, category, comment, isRecurring }
- * @returns {Object} созданный расход
+ * Получить все расходы с пагинацией и фильтрами для конкретного пользователя
+ * @param {string} userId - идентификатор пользователя
+ * @param {Object} options - параметры запроса (page, limit, category, dateFrom, dateTo, isRecurring)
+ * @returns {Promise<Object>} { data: Array, total: number, page: number, limit: number }
  */
-export const createExpense = (expenseData) => {
-  const id = randomUUID();
-  const amount = Number(expenseData.amount);
-  const date = expenseData.date;
-  const category = expenseData.category;
-  const comment = expenseData.comment || '';
-  // Приводим isRecurring к 0/1 для SQLite
-  const isRecurring = expenseData.isRecurring ? 1 : 0;
+export async function getAllExpenses(userId, options = {}) {
+  const db = getDb();
+  const page = Math.max(1, Number(options.page) || 1);
+  const limit = Math.max(1, Math.min(100, Number(options.limit) || 20));
+  const offset = (page - 1) * limit;
 
-  const query = `
-    INSERT INTO expenses (id, amount, date, category, comment, is_recurring, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-  `;
+  // Обязательно фильтруем по user_id
+  const conditions = ['user_id = ?'];
+  const params = [userId];
 
-  db.prepare(query).run(id, amount, date, category, comment, isRecurring);
-
-  return getExpenseById(id);
-};
-
-/**
- * Обновить существующий расход
- * @param {string} id - идентификатор расхода
- * @param {Object} expenseData - новые данные { amount, date, category, comment, isRecurring }
- * @returns {Object} обновлённый расход
- */
-export const updateExpense = (id, expenseData) => {
-  const existing = getExpenseById(id);
-  if (!existing) {
-    throw createError('Расход не найден', 404, 'NOT_FOUND');
+  if (options.category) {
+    conditions.push('category = ?');
+    params.push(options.category);
+  }
+  if (options.dateFrom) {
+    conditions.push('date >= ?');
+    params.push(options.dateFrom);
+  }
+  if (options.dateTo) {
+    conditions.push('date <= ?');
+    params.push(options.dateTo);
+  }
+  if (options.isRecurring !== undefined) {
+    conditions.push('is_recurring = ?');
+    params.push(options.isRecurring ? 1 : 0);
   }
 
-  const amount = expenseData.amount !== undefined ? Number(expenseData.amount) : existing.amount;
-  const date = expenseData.date !== undefined ? expenseData.date : existing.date;
-  const category = expenseData.category !== undefined ? expenseData.category : existing.category;
-  const comment = expenseData.comment !== undefined ? expenseData.comment : existing.comment;
-  const isRecurring = expenseData.isRecurring !== undefined 
-    ? (expenseData.isRecurring ? 1 : 0) 
+  const whereClause = `WHERE ${conditions.join(' AND ')}`;
+
+  // Получаем общее количество записей пользователя
+  const countRow = await db.get(`SELECT COUNT(*) as total FROM expenses ${whereClause}`, params);
+  const total = countRow.total;
+
+  // Получаем данные с пагинацией
+  const rows = await db.all(
+    `SELECT * FROM expenses ${whereClause} ORDER BY date DESC, created_at DESC LIMIT ? OFFSET ?`,
+    [...params, limit, offset]
+  );
+
+  return {
+    data: rows.map(mapRowToExpense),
+    total,
+    page,
+    limit,
+  };
+}
+
+/**
+ * Получить расход по ID для конкретного пользователя
+ * @param {string} userId - идентификатор пользователя
+ * @param {string} id - идентификатор расхода
+ * @returns {Promise<Object|null>} объект расхода или null
+ */
+export async function getExpenseById(userId, id) {
+  const db = getDb();
+  const row = await db.get('SELECT * FROM expenses WHERE id = ? AND user_id = ?', [id, userId]);
+  return mapRowToExpense(row);
+}
+
+/**
+ * Создать новый расход для конкретного пользователя
+ * @param {string} userId - идентификатор пользователя
+ * @param {Object} data - данные расхода { amount, date, category, comment, isRecurring }
+ * @returns {Promise<Object>} созданный расход
+ */
+export async function createExpense(userId, data) {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const isRecurring = data.isRecurring ? 1 : 0;
+
+  await db.run(
+    `INSERT INTO expenses (id, user_id, amount, date, category, comment, is_recurring, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      userId,
+      Number(data.amount),
+      data.date,
+      data.category,
+      data.comment || '',
+      isRecurring,
+      now,
+      now,
+    ]
+  );
+
+  return getExpenseById(userId, id);
+}
+
+/**
+ * Обновить существующий расход для конкретного пользователя
+ * @param {string} userId - идентификатор пользователя
+ * @param {string} id - идентификатор расхода
+ * @param {Object} data - новые данные { amount, date, category, comment, isRecurring }
+ * @returns {Promise<Object|null>} обновлённый расход или null, если не найден
+ */
+export async function updateExpense(userId, id, data) {
+  const db = getDb();
+
+  // Проверяем, существует ли запись и принадлежит ли она пользователю
+  const existing = await getExpenseById(userId, id);
+  if (!existing) return null;
+
+  const now = new Date().toISOString();
+  const isRecurring = data.isRecurring !== undefined
+    ? (data.isRecurring ? 1 : 0)
     : (existing.isRecurring ? 1 : 0);
 
-  const query = `
-    UPDATE expenses 
-    SET amount = ?, date = ?, category = ?, comment = ?, is_recurring = ?, updated_at = datetime('now')
-    WHERE id = ?
-  `;
+  await db.run(
+    `UPDATE expenses
+     SET amount = ?, date = ?, category = ?, comment = ?, is_recurring = ?, updated_at = ?
+     WHERE id = ? AND user_id = ?`,
+    [
+      Number(data.amount ?? existing.amount),
+      data.date ?? existing.date,
+      data.category ?? existing.category,
+      data.comment ?? existing.comment,
+      isRecurring,
+      now,
+      id,
+      userId,
+    ]
+  );
 
-  db.prepare(query).run(amount, date, category, comment, isRecurring, id);
-
-  return getExpenseById(id);
-};
+  return getExpenseById(userId, id);
+}
 
 /**
- * Удалить расход по ID
+ * Удалить расход по ID для конкретного пользователя
+ * @param {string} userId - идентификатор пользователя
  * @param {string} id - идентификатор расхода
- * @returns {boolean} true, если удалено
+ * @returns {Promise<boolean>} true, если удаление успешно
  */
-export const deleteExpense = (id) => {
-  const existing = getExpenseById(id);
-  if (!existing) {
-    throw createError('Расход не найден', 404, 'NOT_FOUND');
-  }
-
-  db.prepare('DELETE FROM expenses WHERE id = ?').run(id);
-  return true;
-};
+export async function deleteExpense(userId, id) {
+  const db = getDb();
+  const result = await db.run('DELETE FROM expenses WHERE id = ? AND user_id = ?', [id, userId]);
+  return result.changes > 0;
+}

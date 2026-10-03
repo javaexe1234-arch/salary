@@ -5,22 +5,20 @@ const router = Router();
 
 /**
  * GET /api/v1/summary/balance
- * Получить общий баланс (сумма доходов, расходов и разница)
+ * Получить общий баланс текущего пользователя
  */
 router.get('/balance', summaryController.getBalance);
 
 /**
  * GET /api/v1/summary/by-category
- * Получить сумму операций, сгруппированную по категориям
- * Query params: type (income/expense), dateFrom, dateTo
+ * Получить сумму по категориям для текущего пользователя
  */
 router.get('/by-category', summaryController.getByCategory);
 
 /**
  * GET /api/v1/summary/by-month
- * Получить помесячную статистику доходов и расходов
- * Query params: dateFrom, dateTo
+ * Получить помесячную статистику для текущего пользователя
  */
-router.get('/by-month', summaryController.getByMonth);
+router.get('/by-month', summaryController.getMonthlySummary);
 
 export default router;

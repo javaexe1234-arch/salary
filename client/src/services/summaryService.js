@@ -1,123 +1,88 @@
-import * as api from './api';
-import { INCOME_CATEGORIES, EXPENSE_CATEGORIES } from '../utils/constants';
-import { getMonthNameShort } from '../utils/formatters';
+import { get } from './api.js';
+import { getIncomes } from './incomeService.js';
+import { getExpenses } from './expenseService.js';
 
 /**
- * Конвертирует период ('today', 'week', 'month', 'year', 'all')
- * в объект { dateFrom, dateTo } для backend
+ * Преобразует период ('today', 'week', 'month', 'year', 'all') в dateFrom и dateTo
  * @param {string} period - период
- * @returns {Object} { dateFrom, dateTo } или пустой объект для 'all'
+ * @returns {Object} { dateFrom, dateTo } — ISO-строки дат или undefined
  */
-const periodToDates = (period) => {
-  if (!period || period === 'all') return {};
+function periodToDates(period) {
+  if (!period || period === 'all') {
+    return {};
+  }
 
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  let dateFrom = null;
+  let dateFrom;
 
   switch (period) {
     case 'today':
-      dateFrom = today;
+      dateFrom = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       break;
-    case 'week': {
-      const weekAgo = new Date(today);
-      weekAgo.setDate(weekAgo.getDate() - 6);
-      dateFrom = weekAgo;
+    case 'week':
+      dateFrom = new Date(now);
+      dateFrom.setDate(dateFrom.getDate() - 7);
       break;
-    }
-    case 'month': {
+    case 'month':
       dateFrom = new Date(now.getFullYear(), now.getMonth(), 1);
       break;
-    }
-    case 'year': {
+    case 'year':
       dateFrom = new Date(now.getFullYear(), 0, 1);
       break;
-    }
     default:
       return {};
   }
 
-  const formatDate = (d) => d.toISOString().split('T')[0];
   return {
-    dateFrom: formatDate(dateFrom),
-    dateTo: formatDate(today),
+    dateFrom: dateFrom.toISOString().split('T')[0],
+    dateTo: now.toISOString().split('T')[0],
   };
-};
+}
 
 /**
  * Получить общий баланс (сумма доходов, расходов и разницу)
- * @param {string} period - период ('all', 'today', 'week', 'month', 'year')
  * @returns {Promise<Object>} { totalIncome, totalExpense, balance }
  */
-export const getBalance = async (period = 'all') => {
-  try {
-    // Если период не 'all' — фильтруем по датам, иначе получаем общий баланс
-    const dates = periodToDates(period);
-    const hasFilter = Object.keys(dates).length > 0;
-
-    if (hasFilter) {
-      // Получаем доходы и расходы за период через пагинацию (большой limit)
-      const [incomesRes, expensesRes] = await Promise.all([
-        api.get('/incomes', { ...dates, limit: 10000 }),
-        api.get('/expenses', { ...dates, limit: 10000 }),
-      ]);
-
-      const incomes = incomesRes.data || [];
-      const expenses = expensesRes.data || [];
-
-      const totalIncome = incomes.reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
-      const totalExpense = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
-
-      return {
-        totalIncome,
-        totalExpense,
-        balance: totalIncome - totalExpense,
-      };
-    }
-
-    // Без фильтра — используем эндпоинт /summary/balance
-    const result = await api.get('/summary/balance');
-    return result.data || { totalIncome: 0, totalExpense: 0, balance: 0 };
-  } catch (error) {
-    console.error('Ошибка получения баланса:', error);
-    return { totalIncome: 0, totalExpense: 0, balance: 0 };
-  }
-};
+export async function getBalance() {
+  const data = await get('/summary/balance');
+  return {
+    totalIncome: data.totalIncome || 0,
+    totalExpense: data.totalExpense || 0,
+    balance: data.balance || 0,
+  };
+}
 
 /**
- * Получить все операции (доходы + расходы), отсортированные по дате
- * @param {number} limit - максимальное количество операций
+ * Получить все операции (доходы + расходы), отсортированные по дате (новые сначала)
+ * @param {number} limit - максимальное количество операций (по умолчанию без ограничений)
  * @returns {Promise<Array>} массив операций
  */
-export const getAllTransactions = async (limit = null) => {
-  try {
-    // Запрашиваем доходы и расходы параллельно
-    const [incomesRes, expensesRes] = await Promise.all([
-      api.get('/incomes', { limit: 10000 }),
-      api.get('/expenses', { limit: 10000 }),
-    ]);
+export async function getAllTransactions(limit = null) {
+  // Параметры запроса: если есть limit — запрашиваем с запасом, чтобы после объединения получить достаточно
+  const fetchLimit = limit ? limit * 2 : 100;
 
-    const incomes = (incomesRes.data || []).map((i) => ({ ...i, type: 'income' }));
-    const expenses = (expensesRes.data || []).map((e) => ({ ...e, type: 'expense' }));
+  // Параллельно запрашиваем доходы и расходы
+  const [incomesResponse, expensesResponse] = await Promise.all([
+    getIncomes({ limit: fetchLimit }),
+    getExpenses({ limit: fetchLimit }),
+  ]);
 
-    const allTransactions = [...incomes, ...expenses];
+  const incomes = incomesResponse.data || [];
+  const expenses = expensesResponse.data || [];
 
-    // Сортировка по дате (новые сначала)
-    allTransactions.sort((a, b) => {
-      const dateA = new Date(a.date || a.createdAt || 0);
-      const dateB = new Date(b.date || b.createdAt || 0);
-      return dateB - dateA;
-    });
+  // Объединяем и сортируем по дате (новые сначала)
+  const allTransactions = [...incomes, ...expenses].sort((a, b) => {
+    const dateA = new Date(a?.date || a?.createdAt || 0);
+    const dateB = new Date(b?.date || b?.createdAt || 0);
+    return dateB - dateA;
+  });
 
-    if (limit && limit > 0) {
-      return allTransactions.slice(0, limit);
-    }
-    return allTransactions;
-  } catch (error) {
-    console.error('Ошибка получения списка операций:', error);
-    return [];
+  if (limit && limit > 0) {
+    return allTransactions.slice(0, limit);
   }
-};
+
+  return allTransactions;
+}
 
 /**
  * Получить сумму по категориям (для круговой диаграммы)
@@ -125,101 +90,69 @@ export const getAllTransactions = async (limit = null) => {
  * @param {string} period - период ('all', 'today', 'week', 'month', 'year')
  * @returns {Promise<Array>} массив объектов { name, value } для recharts
  */
-export const getByCategory = async (type = 'expense', period = 'all') => {
-  try {
-    const dates = periodToDates(period);
-    const categories = type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+export async function getByCategory(type = 'expense', period = 'all') {
+  const dates = periodToDates(period);
+  const data = await get('/summary/by-category', { type, ...dates });
 
-    // Используем эндпоинт /summary/by-category
-    const result = await api.get('/summary/by-category', { type, ...dates });
-    const data = result.data || [];
-
-    // Преобразуем формат backend в формат recharts
-    return data
-      .map((item) => {
-        const category = (categories || []).find((c) => c.id === item.category);
-        return {
-          name: category?.label || 'Прочее',
-          value: Number(item.total) || 0,
-        };
-      })
-      .filter((item) => item.value > 0)
-      .sort((a, b) => b.value - a.value);
-  } catch (error) {
-    console.error('Ошибка получения данных по категориям:', error);
-    return [];
-  }
-};
+  // Преобразуем ответ backend в формат, ожидаемый PieChart: { name, value }
+  return (data || [])
+    .filter((item) => item.total > 0)
+    .map((item) => ({
+      name: item.label || 'Прочее',
+      value: item.total,
+    }));
+}
 
 /**
  * Получить помесячную статистику (для столбчатого графика)
  * @param {number} monthsCount - количество последних месяцев (по умолчанию 6)
  * @returns {Promise<Array>} массив объектов { month, income, expense } для recharts
  */
-export const getMonthlySummary = async (monthsCount = 6) => {
-  try {
-    // Используем эндпоинт /summary/by-month
-    const result = await api.get('/summary/by-month');
-    const data = result.data || [];
+export async function getMonthlySummary(monthsCount = 6) {
+  const data = await get('/summary/by-month', { months: monthsCount });
 
-    // Генерируем список последних N месяцев для отображения (даже если данных нет)
-    const now = new Date();
-    const months = [];
-    for (let i = monthsCount - 1; i >= 0; i--) {
-      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      months.push({
-        key,
-        label: getMonthNameShort(date.getMonth()),
-      });
-    }
+  // Преобразуем формат месяца из 'YYYY-MM' в короткое название (например, 'Сен')
+  const monthNamesShort = [
+    'Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
+    'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'
+  ];
 
-    // Создаём карту данных из ответа backend
-    const dataMap = {};
-    (data || []).forEach((item) => {
-      dataMap[item.month] = {
-        income: Number(item.income) || 0,
-        expense: Number(item.expense) || 0,
-      };
-    });
-
-    // Собираем итоговый массив, подставляя нули для месяцев без данных
-    return months.map((m) => ({
-      month: m.label,
-      income: dataMap[m.key]?.income || 0,
-      expense: dataMap[m.key]?.expense || 0,
-    }));
-  } catch (error) {
-    console.error('Ошибка получения помесячной статистики:', error);
-    return [];
-  }
-};
+  return (data || []).map((item) => {
+    // Извлекаем номер месяца из формата 'YYYY-MM'
+    const monthIndex = parseInt(item.month.split('-')[1], 10) - 1;
+    return {
+      month: monthNamesShort[monthIndex] || item.month,
+      income: item.income || 0,
+      expense: item.expense || 0,
+    };
+  });
+}
 
 /**
  * Получить операцию по ID (из доходов или расходов)
  * @param {string} id - идентификатор операции
  * @returns {Promise<Object|null>} объект операции или null
  */
-export const getTransactionById = async (id) => {
+export async function getTransactionById(id) {
   if (!id) return null;
-  try {
-    // Пробуем найти в доходах
-    const incomeResult = await api.get(`/incomes/${id}`);
-    if (incomeResult.data) {
-      return { ...incomeResult.data, type: 'income' };
-    }
-  } catch (e) {
-    // Не нашли в доходах — ищем в расходах
-  }
 
   try {
-    const expenseResult = await api.get(`/expenses/${id}`);
-    if (expenseResult.data) {
-      return { ...expenseResult.data, type: 'expense' };
-    }
-  } catch (e) {
-    // Не нашли нигде
-  }
+    // Параллельно ищем в доходах и расходах
+    const [income, expense] = await Promise.allSettled([
+      get(`/incomes/${id}`),
+      get(`/expenses/${id}`),
+    ]);
 
-  return null;
-};
+    if (income.status === 'fulfilled' && income.value) {
+      return income.value;
+    }
+    if (expense.status === 'fulfilled' && expense.value) {
+      return expense.value;
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Ошибка получения операции по ID:', error);
+    return null;
+  }
+}

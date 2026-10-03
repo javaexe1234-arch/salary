@@ -1,116 +1,127 @@
-import db from '../db/connection.js';
+import { getDb } from '../db/connection.js';
 
 /**
- * Получить общий баланс (сумма всех доходов минус сумма всех расходов)
- * @returns {Object} { totalIncome, totalExpense, balance }
+ * Получить общий баланс (сумма доходов, расходов и разницу) для конкретного пользователя
+ * @param {string} userId - идентификатор пользователя
+ * @returns {Promise<Object>} { totalIncome, totalExpense, balance }
  */
-export const getBalance = () => {
-  const incomeResult = db.prepare('SELECT SUM(amount) as total FROM incomes').get();
-  const expenseResult = db.prepare('SELECT SUM(amount) as total FROM expenses').get();
+export async function getBalance(userId) {
+  const db = getDb();
 
-  const totalIncome = Number(incomeResult.total) || 0;
-  const totalExpense = Number(expenseResult.total) || 0;
+  // Сумма всех доходов пользователя
+  const incomeRow = await db.get(
+    'SELECT COALESCE(SUM(amount), 0) as total FROM incomes WHERE user_id = ?',
+    [userId]
+  );
+
+  // Сумма всех расходов пользователя
+  const expenseRow = await db.get(
+    'SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE user_id = ?',
+    [userId]
+  );
+
+  const totalIncome = incomeRow?.total || 0;
+  const totalExpense = expenseRow?.total || 0;
+  const balance = totalIncome - totalExpense;
 
   return {
     totalIncome,
     totalExpense,
-    balance: totalIncome - totalExpense,
+    balance,
   };
-};
+}
 
 /**
- * Получить сумму операций, сгруппированную по категориям
- * @param {string} type - 'income' или 'expense'
- * @param {Object} filters - { dateFrom, dateTo } (опционально)
- * @returns {Array} массив объектов { category, total }
+ * Получить сумму по категориям для конкретного пользователя
+ * @param {string} userId - идентификатор пользователя
+ * @param {Object} options - параметры фильтрации (type, dateFrom, dateTo)
+ * @returns {Promise<Array>} массив объектов { category, total, count }
  */
-export const getByCategory = (type, filters = {}) => {
-  const tableName = type === 'income' ? 'incomes' : 'expenses';
-  const conditions = [];
-  const params = [];
+export async function getByCategory(userId, options = {}) {
+  const db = getDb();
+  const type = options.type === 'income' ? 'income' : 'expense';
+  const table = type === 'income' ? 'incomes' : 'expenses';
 
-  if (filters.dateFrom) {
+  // Формируем условия WHERE
+  const conditions = ['user_id = ?'];
+  const params = [userId];
+
+  if (options.dateFrom) {
     conditions.push('date >= ?');
-    params.push(filters.dateFrom);
+    params.push(options.dateFrom);
   }
-  if (filters.dateTo) {
+  if (options.dateTo) {
     conditions.push('date <= ?');
-    params.push(filters.dateTo);
+    params.push(options.dateTo);
   }
 
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
-  const query = `
-    SELECT category, SUM(amount) as total
-    FROM ${tableName}
-    ${whereClause}
-    GROUP BY category
-    ORDER BY total DESC
-  `;
+  // Группируем по категории и считаем сумму и количество
+  const rows = await db.all(
+    `SELECT category, SUM(amount) as total, COUNT(*) as count 
+     FROM ${table} 
+     ${whereClause} 
+     GROUP BY category 
+     ORDER BY total DESC`,
+    params
+  );
 
-  const rows = db.prepare(query).all(...params);
-
-  return rows.map(row => ({
-    category: row.category,
-    total: Number(row.total),
-  }));
-};
+  return rows || [];
+}
 
 /**
- * Получить помесячную статистику доходов и расходов
- * @param {Object} filters - { dateFrom, dateTo } (опционально)
- * @returns {Array} массив объектов { month, income, expense }
+ * Получить помесячную статистику для конкретного пользователя
+ * @param {string} userId - идентификатор пользователя
+ * @param {Object} options - параметры (months - количество месяцев)
+ * @returns {Promise<Array>} массив объектов { month, income, expense }
  */
-export const getByMonth = (filters = {}) => {
-  const conditions = [];
-  const params = [];
+export async function getMonthlySummary(userId, options = {}) {
+  const db = getDb();
+  const months = Math.max(1, Math.min(24, Number(options.months) || 6));
 
-  if (filters.dateFrom) {
-    conditions.push('date >= ?');
-    params.push(filters.dateFrom);
+  // Получаем доходы по месяцам
+  const incomesByMonth = await db.all(
+    `SELECT strftime('%Y-%m', date) as month, SUM(amount) as total
+     FROM incomes
+     WHERE user_id = ?
+     GROUP BY month
+     ORDER BY month DESC
+     LIMIT ?`,
+    [userId, months]
+  );
+
+  // Получаем расходы по месяцам
+  const expensesByMonth = await db.all(
+    `SELECT strftime('%Y-%m', date) as month, SUM(amount) as total
+     FROM expenses
+     WHERE user_id = ?
+     GROUP BY month
+     ORDER BY month DESC
+     LIMIT ?`,
+    [userId, months]
+  );
+
+  // Формируем список всех месяцев за указанный период
+  const now = new Date();
+  const allMonths = [];
+  for (let i = months - 1; i >= 0; i--) {
+    const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const monthStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    allMonths.push(monthStr);
   }
-  if (filters.dateTo) {
-    conditions.push('date <= ?');
-    params.push(filters.dateTo);
-  }
 
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  // Объединяем данные
+  const result = allMonths.map((month) => {
+    const incomeRow = incomesByMonth?.find((row) => row.month === month);
+    const expenseRow = expensesByMonth?.find((row) => row.month === month);
 
-  // Используем UNION ALL для объединения доходов и расходов по месяцам
-  const query = `
-    WITH monthly_data AS (
-      SELECT 
-        strftime('%Y-%m', date) as month,
-        SUM(amount) as income,
-        0 as expense
-      FROM incomes
-      ${whereClause}
-      GROUP BY strftime('%Y-%m', date)
-      
-      UNION ALL
-      
-      SELECT 
-        strftime('%Y-%m', date) as month,
-        0 as income,
-        SUM(amount) as expense
-      FROM expenses
-      ${whereClause}
-      GROUP BY strftime('%Y-%m', date)
-    )
-    SELECT 
+    return {
       month,
-      SUM(income) as total_income,
-      SUM(expense) as total_expense
-    FROM monthly_data
-    GROUP BY month
-    ORDER BY month ASC
-  `;
+      income: incomeRow?.total || 0,
+      expense: expenseRow?.total || 0,
+    };
+  });
 
-  const rows = db.prepare(query).all(...params);
-
-  return rows.map(row => ({
-    month: row.month,
-    income: Number(row.total_income),
-    expense: Number(row.total_expense),
-  }));
-};
+  return result;
+}

@@ -1,21 +1,19 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import styles from './History.module.css';
-import TransactionList from '../../components/TransactionList/TransactionList';
-import Modal from '../../components/Modal/Modal';
-import TransactionForm from '../../components/TransactionForm/TransactionForm';
-import * as incomeService from '../../services/incomeService';
-import * as expenseService from '../../services/expenseService';
-import { INCOME_CATEGORIES, EXPENSE_CATEGORIES } from '../../utils/constants';
+import React, { useState, useEffect } from "react";
+import TransactionList from "../../components/TransactionList/TransactionList";
+import Modal from "../../components/Modal/Modal";
+import ConfirmModal from "../../components/ConfirmModal/ConfirmModal";
+import TransactionForm from "../../components/TransactionForm/TransactionForm";
+import { getAllTransactions } from "../../services/summaryService";
+import { addIncome, updateIncome, deleteIncome } from "../../services/incomeService";
+import { addExpense, updateExpense, deleteExpense } from "../../services/expenseService";
+import { INCOME_CATEGORIES, EXPENSE_CATEGORIES } from "../../utils/constants";
+import { isDateInPeriod } from "../../utils/formatters";
 
 function History() {
-  const location = useLocation();
-  const navigate = useNavigate();
-
   // Состояние фильтров
-  const [typeFilter, setTypeFilter] = useState('all');
-  const [categoryFilter, setCategoryFilter] = useState('all');
-  const [periodFilter, setPeriodFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [periodFilter, setPeriodFilter] = useState("all");
 
   // Состояние модалки
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -24,104 +22,49 @@ function History() {
   // Состояние данных
   const [allTransactions, setAllTransactions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState(null);
 
-  // Загрузка данных с сервера
-  const loadData = useCallback(async () => {
+  // Состояние для модалки подтверждения удаления
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+  const [transactionToDelete, setTransactionToDelete] = useState(null);
+
+  // Функция загрузки данных
+  const loadData = async () => {
     try {
       setIsLoading(true);
-      setError(null);
-
-      // Формируем параметры фильтрации для API
-      const filters = {};
-      if (typeFilter !== 'all') filters.type = typeFilter;
-      if (categoryFilter !== 'all') filters.category = categoryFilter;
-      
-      // Конвертируем период в даты
-      if (periodFilter !== 'all') {
-        const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        let dateFrom = null;
-
-        switch (periodFilter) {
-          case 'today':
-            dateFrom = today;
-            break;
-          case 'week': {
-            const weekAgo = new Date(today);
-            weekAgo.setDate(weekAgo.getDate() - 6);
-            dateFrom = weekAgo;
-            break;
-          }
-          case 'month': {
-            dateFrom = new Date(now.getFullYear(), now.getMonth(), 1);
-            break;
-          }
-          case 'year': {
-            dateFrom = new Date(now.getFullYear(), 0, 1);
-            break;
-          }
-        }
-
-        if (dateFrom) {
-          filters.dateFrom = dateFrom.toISOString().split('T')[0];
-          filters.dateTo = today.toISOString().split('T')[0];
-        }
-      }
-
-      // Загружаем доходы и расходы параллельно
-      const [incomesRes, expensesRes] = await Promise.all([
-        incomeService.getIncomes(filters),
-        expenseService.getExpenses(filters),
-      ]);
-
-      const incomes = (incomesRes.data || []).map((i) => ({ ...i, type: 'income' }));
-      const expenses = (expensesRes.data || []).map((e) => ({ ...e, type: 'expense' }));
-
-      const allTransactions = [...incomes, ...expenses];
-
-      // Сортировка по дате (новые сначала)
-      allTransactions.sort((a, b) => {
-        const dateA = new Date(a.date || a.createdAt || 0);
-        const dateB = new Date(b.date || b.createdAt || 0);
-        return dateB - dateA;
-      });
-
-      setAllTransactions(allTransactions);
-    } catch (err) {
-      console.error('Ошибка загрузки данных History:', err);
-      setError('Не удалось загрузить данные. Проверьте, запущен ли сервер.');
+      const transactions = await getAllTransactions();
+      setAllTransactions(Array.isArray(transactions) ? transactions : []);
+    } catch (error) {
+      console.error("Ошибка загрузки истории:", error);
+      alert("Не удалось загрузить историю операций. Проверьте, запущен ли сервер.");
     } finally {
       setIsLoading(false);
     }
-  }, [typeFilter, categoryFilter, periodFilter]);
+  };
 
-  // Загружаем данные при монтировании и изменении фильтров
+  // Загрузка данных при монтировании компонента
   useEffect(() => {
     loadData();
-  }, [loadData]);
-
-  // Проверяем, передана ли операция для редактирования через state
-  useEffect(() => {
-    if (location.state?.editTransaction) {
-      setEditingTransaction(location.state.editTransaction);
-      setIsModalOpen(true);
-      // Очищаем state, чтобы не открывалась модалка при следующем переходе
-      navigate(location.pathname, { replace: true, state: {} });
-    }
-  }, [location.state, navigate, location.pathname]);
+  }, []);
 
   // Получаем категории для текущего фильтра типа
   const getCategoriesForFilter = () => {
-    if (typeFilter === 'income') {
+    if (typeFilter === "income") {
       return INCOME_CATEGORIES;
-    } else if (typeFilter === 'expense') {
+    } else if (typeFilter === "expense") {
       return EXPENSE_CATEGORIES;
     } else {
-      // Все категории (доходы + расходы)
       return [...INCOME_CATEGORIES, ...EXPENSE_CATEGORIES];
     }
   };
+
+  // Фильтрация операций
+  const filteredTransactions = (allTransactions || []).filter((transaction) => {
+    if (typeFilter !== "all" && transaction?.type !== typeFilter) return false;
+    if (categoryFilter !== "all" && transaction?.category !== categoryFilter)
+      return false;
+    if (!isDateInPeriod(transaction?.date, periodFilter)) return false;
+    return true;
+  });
 
   // Открытие модалки для добавления
   const handleOpenAddModal = () => {
@@ -146,115 +89,107 @@ function History() {
     try {
       if (editingTransaction?.id) {
         // Редактирование существующей операции
-        if (editingTransaction.type === 'income') {
-          await incomeService.updateIncome(editingTransaction.id, data);
+        if (data.type === "income") {
+          await updateIncome(editingTransaction.id, data);
         } else {
-          await expenseService.updateExpense(editingTransaction.id, data);
+          await updateExpense(editingTransaction.id, data);
         }
       } else {
         // Добавление новой операции
-        if (data.type === 'income') {
-          await incomeService.addIncome(data);
+        if (data.type === "income") {
+          await addIncome(data);
         } else {
-          await expenseService.addExpense(data);
+          await addExpense(data);
         }
       }
 
-      // Перезагружаем данные
       await loadData();
       handleCloseModal();
-    } catch (err) {
-      console.error('Ошибка сохранения операции:', err);
-      alert(`Ошибка: ${err.message || 'Не удалось сохранить операцию'}`);
+    } catch (error) {
+      console.error("Ошибка сохранения операции:", error);
+      alert(`Ошибка: ${error.message}`);
     }
   };
 
-  // Обработка удаления операции
-  const handleDelete = async (transaction) => {
+  // Открытие модалки подтверждения удаления
+  const handleDelete = (transaction) => {
     if (!transaction?.id) return;
+    setTransactionToDelete(transaction);
+    setIsConfirmModalOpen(true);
+  };
 
-    if (!window.confirm('Вы уверены, что хотите удалить эту операцию?')) return;
+  // Подтверждение удаления
+  const handleConfirmDelete = async () => {
+    if (!transactionToDelete?.id) return;
 
     try {
-      if (transaction.type === 'income') {
-        await incomeService.deleteIncome(transaction.id);
+      if (transactionToDelete.type === "income") {
+        await deleteIncome(transactionToDelete.id);
       } else {
-        await expenseService.deleteExpense(transaction.id);
+        await deleteExpense(transactionToDelete.id);
       }
-
-      // Перезагружаем данные
       await loadData();
-    } catch (err) {
-      console.error('Ошибка удаления операции:', err);
-      alert(`Ошибка: ${err.message || 'Не удалось удалить операцию'}`);
+    } catch (error) {
+      console.error("Ошибка удаления операции:", error);
+      alert("Не удалось удалить операцию");
+    } finally {
+      setTransactionToDelete(null);
     }
+  };
+
+  // Закрытие модалки подтверждения
+  const handleCloseConfirmModal = () => {
+    setIsConfirmModalOpen(false);
+    setTransactionToDelete(null);
   };
 
   // Сброс фильтров
   const handleResetFilters = () => {
-    setTypeFilter('all');
-    setCategoryFilter('all');
-    setPeriodFilter('all');
+    setTypeFilter("all");
+    setCategoryFilter("all");
+    setPeriodFilter("all");
   };
 
   // Смена типа фильтра — сбрасываем фильтр по категории
   const handleTypeFilterChange = (newType) => {
     setTypeFilter(newType);
-    setCategoryFilter('all');
+    setCategoryFilter("all");
   };
 
-  // Состояние загрузки
   if (isLoading) {
     return (
-      <div className={styles.history}>
-        <h1 className={styles.title}>История операций</h1>
-        <div className={styles.listContainer}>
-          <div style={{ textAlign: 'center', padding: '48px 24px', color: '#6b7280' }}>
-            Загрузка данных...
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Состояние ошибки
-  if (error) {
-    return (
-      <div className={styles.history}>
-        <h1 className={styles.title}>История операций</h1>
-        <div className={styles.listContainer}>
-          <div style={{ textAlign: 'center', padding: '48px 24px', color: '#ef4444' }}>
-            <p>⚠️ {error}</p>
-            <button
-              onClick={loadData}
-              style={{
-                marginTop: '16px',
-                padding: '10px 24px',
-                backgroundColor: '#2563eb',
-                color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: 'pointer',
-              }}
-            >
-              Повторить
-            </button>
-          </div>
-        </div>
+      <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 text-secondary">
+        <span className="size-9 animate-spin rounded-full border-[3px] border-border border-t-primary" />
+        <p className="animate-shimmer text-sm">
+          Загрузка истории операций...
+        </p>
       </div>
     );
   }
 
   return (
-    <div className={styles.history}>
-      <h1 className={styles.title}>История операций</h1>
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="page-title">История операций</h1>
+
+        <button
+          type="button"
+          onClick={handleOpenAddModal}
+          className="btn btn-primary px-4 py-2 text-sm"
+        >
+          + Добавить операцию
+        </button>
+      </div>
 
       {/* Панель фильтров */}
-      <div className={styles.filters}>
-        <div className={styles.filterGroup}>
-          <label className={styles.filterLabel}>Тип операции</label>
+      <div className="card animate-rise grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm font-medium text-secondary" htmlFor="typeFilter">
+            Тип операции
+          </label>
           <select
-            className={styles.filterInput}
+            id="typeFilter"
+            className="field cursor-pointer"
             value={typeFilter}
             onChange={(e) => handleTypeFilterChange(e.target.value)}
           >
@@ -264,10 +199,13 @@ function History() {
           </select>
         </div>
 
-        <div className={styles.filterGroup}>
-          <label className={styles.filterLabel}>Категория</label>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm font-medium text-secondary" htmlFor="categoryFilter">
+            Категория
+          </label>
           <select
-            className={styles.filterInput}
+            id="categoryFilter"
+            className="field cursor-pointer"
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
           >
@@ -280,10 +218,13 @@ function History() {
           </select>
         </div>
 
-        <div className={styles.filterGroup}>
-          <label className={styles.filterLabel}>Период</label>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm font-medium text-secondary" htmlFor="periodFilter">
+            Период
+          </label>
           <select
-            className={styles.filterInput}
+            id="periodFilter"
+            className="field cursor-pointer"
             value={periodFilter}
             onChange={(e) => setPeriodFilter(e.target.value)}
           >
@@ -295,18 +236,30 @@ function History() {
           </select>
         </div>
 
-        <button
-          className={styles.resetButton}
-          onClick={handleResetFilters}
-        >
-          Сбросить фильтры
-        </button>
+        <div className="flex items-end">
+          <button
+            type="button"
+            className="btn btn-ghost w-full bg-surface-muted"
+            onClick={handleResetFilters}
+          >
+            Сбросить фильтры
+          </button>
+        </div>
       </div>
 
       {/* Список операций */}
-      <div className={styles.listContainer}>
+      <div className="card animate-rise p-5 sm:p-6" style={{ animationDelay: "80ms" }}>
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-bold tracking-tight text-text">
+            Операции
+          </h2>
+          <span className="rounded-full bg-surface-muted px-3 py-1 text-sm font-medium tabular-nums text-secondary transition-colors duration-500">
+            {filteredTransactions.length}
+          </span>
+        </div>
+
         <TransactionList
-          transactions={allTransactions}
+          transactions={filteredTransactions}
           onEdit={handleOpenEditModal}
           onDelete={handleDelete}
         />
@@ -316,7 +269,7 @@ function History() {
       <Modal
         isOpen={isModalOpen}
         onClose={handleCloseModal}
-        title={editingTransaction ? 'Редактировать операцию' : 'Новая операция'}
+        title={editingTransaction ? "Редактировать операцию" : "Новая операция"}
       >
         <TransactionForm
           onSubmit={handleSubmit}
@@ -324,6 +277,18 @@ function History() {
           editData={editingTransaction}
         />
       </Modal>
+
+      {/* Модальное окно подтверждения удаления */}
+      <ConfirmModal
+        isOpen={isConfirmModalOpen}
+        onClose={handleCloseConfirmModal}
+        onConfirm={handleConfirmDelete}
+        title="Удалить операцию?"
+        message="Вы уверены, что хотите удалить эту операцию? Это действие нельзя отменить."
+        confirmText="Удалить"
+        cancelText="Отмена"
+        variant="danger"
+      />
     </div>
   );
 }

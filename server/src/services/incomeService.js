@@ -1,147 +1,157 @@
-import db from '../db/connection.js';
-import { randomUUID } from 'crypto';
-import { createError } from '../middleware/errorHandler.js';
+import crypto from 'crypto';
+import { getDb } from '../db/connection.js';
 
 /**
- * Получить список доходов с пагинацией и фильтрацией
- * @param {Object} options - { page, limit, category, dateFrom, dateTo }
- * @returns {Object} { data: Array, total: number, page: number, limit: number }
+ * Преобразует строку базы данных (snake_case) в объект (camelCase)
+ * @param {Object} row - строка из БД
+ * @returns {Object} объект в camelCase
  */
-export const getAllIncomes = (options = {}) => {
-  const { page = 1, limit = 50, category, dateFrom, dateTo } = options;
-  const offset = (page - 1) * limit;
-
-  // Формируем условия WHERE динамически
-  const conditions = [];
-  const params = [];
-
-  if (category) {
-    conditions.push('category = ?');
-    params.push(category);
-  }
-  if (dateFrom) {
-    conditions.push('date >= ?');
-    params.push(dateFrom);
-  }
-  if (dateTo) {
-    conditions.push('date <= ?');
-    params.push(dateTo);
-  }
-
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-  // Запрос для получения общего количества записей
-  const countQuery = `SELECT COUNT(*) as total FROM incomes ${whereClause}`;
-  const countResult = db.prepare(countQuery).get(...params);
-  const total = countResult.total;
-
-  // Запрос для получения данных с пагинацией
-  const dataQuery = `
-    SELECT id, amount, date, category, comment, created_at, updated_at 
-    FROM incomes 
-    ${whereClause} 
-    ORDER BY date DESC, created_at DESC 
-    LIMIT ? OFFSET ?
-  `;
-  
-  const rows = db.prepare(dataQuery).all(...params, limit, offset);
-
-  // Маппинг snake_case -> camelCase
-  const data = rows.map(row => ({
-    id: row.id,
-    amount: Number(row.amount),
-    date: row.date,
-    category: row.category,
-    comment: row.comment || '',
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }));
-
-  return { data, total, page: Number(page), limit: Number(limit) };
-};
-
-/**
- * Получить доход по ID
- * @param {string} id - идентификатор дохода
- * @returns {Object|null} объект дохода или null
- */
-export const getIncomeById = (id) => {
-  const row = db.prepare('SELECT id, amount, date, category, comment, created_at, updated_at FROM incomes WHERE id = ?').get(id);
-  
+function mapRowToIncome(row) {
   if (!row) return null;
-
   return {
     id: row.id,
-    amount: Number(row.amount),
+    type: 'income',
+    amount: row.amount,
     date: row.date,
     category: row.category,
-    comment: row.comment || '',
+    comment: row.comment,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
-};
+}
 
 /**
- * Создать новый доход
- * @param {Object} incomeData - { amount, date, category, comment }
- * @returns {Object} созданный доход
+ * Получить все доходы с пагинацией и фильтрами для конкретного пользователя
+ * @param {string} userId - идентификатор пользователя
+ * @param {Object} options - параметры запроса (page, limit, category, dateFrom, dateTo)
+ * @returns {Promise<Object>} { data: Array, total: number, page: number, limit: number }
  */
-export const createIncome = (incomeData) => {
-  const id = randomUUID();
-  const amount = Number(incomeData.amount);
-  const date = incomeData.date;
-  const category = incomeData.category;
-  const comment = incomeData.comment || '';
+export async function getAllIncomes(userId, options = {}) {
+  const db = getDb();
+  const page = Math.max(1, Number(options.page) || 1);
+  const limit = Math.max(1, Math.min(100, Number(options.limit) || 20));
+  const offset = (page - 1) * limit;
 
-  const query = `
-    INSERT INTO incomes (id, amount, date, category, comment, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-  `;
+  // Обязательно фильтруем по user_id
+  const conditions = ['user_id = ?'];
+  const params = [userId];
 
-  db.prepare(query).run(id, amount, date, category, comment);
-
-  return getIncomeById(id);
-};
-
-/**
- * Обновить существующий доход
- * @param {string} id - идентификатор дохода
- * @param {Object} incomeData - новые данные { amount, date, category, comment }
- * @returns {Object} обновлённый доход
- */
-export const updateIncome = (id, incomeData) => {
-  const existing = getIncomeById(id);
-  if (!existing) {
-    throw createError('Доход не найден', 404, 'NOT_FOUND');
+  if (options.category) {
+    conditions.push('category = ?');
+    params.push(options.category);
+  }
+  if (options.dateFrom) {
+    conditions.push('date >= ?');
+    params.push(options.dateFrom);
+  }
+  if (options.dateTo) {
+    conditions.push('date <= ?');
+    params.push(options.dateTo);
   }
 
-  const amount = incomeData.amount !== undefined ? Number(incomeData.amount) : existing.amount;
-  const date = incomeData.date !== undefined ? incomeData.date : existing.date;
-  const category = incomeData.category !== undefined ? incomeData.category : existing.category;
-  const comment = incomeData.comment !== undefined ? incomeData.comment : existing.comment;
+  const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
-  const query = `
-    UPDATE incomes 
-    SET amount = ?, date = ?, category = ?, comment = ?, updated_at = datetime('now')
-    WHERE id = ?
-  `;
+  // Получаем общее количество записей пользователя
+  const countRow = await db.get(`SELECT COUNT(*) as total FROM incomes ${whereClause}`, params);
+  const total = countRow.total;
 
-  db.prepare(query).run(amount, date, category, comment, id);
+  // Получаем данные с пагинацией
+  const rows = await db.all(
+    `SELECT * FROM incomes ${whereClause} ORDER BY date DESC, created_at DESC LIMIT ? OFFSET ?`,
+    [...params, limit, offset]
+  );
 
-  return getIncomeById(id);
-};
+  return {
+    data: rows.map(mapRowToIncome),
+    total,
+    page,
+    limit,
+  };
+}
 
 /**
- * Удалить доход по ID
+ * Получить доход по ID для конкретного пользователя
+ * @param {string} userId - идентификатор пользователя
  * @param {string} id - идентификатор дохода
- * @returns {boolean} true, если удалено
+ * @returns {Promise<Object|null>} объект дохода или null
  */
-export const deleteIncome = (id) => {
-  const existing = getIncomeById(id);
-  if (!existing) {
-    throw createError('Доход не найден', 404, 'NOT_FOUND');
-  }
+export async function getIncomeById(userId, id) {
+  const db = getDb();
+  const row = await db.get('SELECT * FROM incomes WHERE id = ? AND user_id = ?', [id, userId]);
+  return mapRowToIncome(row);
+}
 
-  db.prepare('DELETE FROM incomes WHERE id = ?').run(id);
-  return true;
-};
+/**
+ * Создать новый доход для конкретного пользователя
+ * @param {string} userId - идентификатор пользователя
+ * @param {Object} data - данные дохода { amount, date, category, comment }
+ * @returns {Promise<Object>} созданный доход
+ */
+export async function createIncome(userId, data) {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+
+  await db.run(
+    `INSERT INTO incomes (id, user_id, amount, date, category, comment, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      userId,
+      Number(data.amount),
+      data.date,
+      data.category,
+      data.comment || '',
+      now,
+      now,
+    ]
+  );
+
+  return getIncomeById(userId, id);
+}
+
+/**
+ * Обновить существующий доход для конкретного пользователя
+ * @param {string} userId - идентификатор пользователя
+ * @param {string} id - идентификатор дохода
+ * @param {Object} data - новые данные { amount, date, category, comment }
+ * @returns {Promise<Object|null>} обновлённый доход или null, если не найден
+ */
+export async function updateIncome(userId, id, data) {
+  const db = getDb();
+
+  // Проверяем, существует ли запись и принадлежит ли она пользователю
+  const existing = await getIncomeById(userId, id);
+  if (!existing) return null;
+
+  const now = new Date().toISOString();
+
+  await db.run(
+    `UPDATE incomes
+     SET amount = ?, date = ?, category = ?, comment = ?, updated_at = ?
+     WHERE id = ? AND user_id = ?`,
+    [
+      Number(data.amount ?? existing.amount),
+      data.date ?? existing.date,
+      data.category ?? existing.category,
+      data.comment ?? existing.comment,
+      now,
+      id,
+      userId,
+    ]
+  );
+
+  return getIncomeById(userId, id);
+}
+
+/**
+ * Удалить доход по ID для конкретного пользователя
+ * @param {string} userId - идентификатор пользователя
+ * @param {string} id - идентификатор дохода
+ * @returns {Promise<boolean>} true, если удаление успешно
+ */
+export async function deleteIncome(userId, id) {
+  const db = getDb();
+  const result = await db.run('DELETE FROM incomes WHERE id = ? AND user_id = ?', [id, userId]);
+  return result.changes > 0;
+}

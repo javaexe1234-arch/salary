@@ -1,3 +1,4 @@
+// Категории доходов
 export const INCOME_CATEGORIES = [
   { id: 'salary', label: 'Зарплата' },
   { id: 'freelance', label: 'Подработка' },
@@ -8,6 +9,7 @@ export const INCOME_CATEGORIES = [
   { id: 'other', label: 'Прочее' },
 ];
 
+// Категории расходов
 export const EXPENSE_CATEGORIES = [
   { id: 'groceries', label: 'Продукты' },
   { id: 'utilities', label: 'Коммуналка' },
@@ -21,5 +23,32 @@ export const EXPENSE_CATEGORIES = [
   { id: 'other', label: 'Прочее' },
 ];
 
-export const INCOME_CATEGORY_IDS = INCOME_CATEGORIES.map(cat => cat.id);
-export const EXPENSE_CATEGORY_IDS = EXPENSE_CATEGORIES.map(cat => cat.id);
+// Вспомогательные функции для работы с категориями
+
+/**
+ * Получить список ID всех категорий доходов
+ * @returns {Array<string>} массив ID категорий
+ */
+export function getIncomeCategoryIds() {
+  return INCOME_CATEGORIES.map(cat => cat.id);
+}
+
+/**
+ * Получить список ID всех категорий расходов
+ * @returns {Array<string>} массив ID категорий
+ */
+export function getExpenseCategoryIds() {
+  return EXPENSE_CATEGORIES.map(cat => cat.id);
+}
+
+/**
+ * Получить label категории по ID
+ * @param {string} categoryId - ID категории
+ * @param {string} type - тип операции ('income' или 'expense')
+ * @returns {string} label категории или 'Прочее', если не найдена
+ */
+export function getCategoryLabel(categoryId, type = 'expense') {
+  const categories = type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+  const category = categories.find(cat => cat.id === categoryId);
+  return category?.label || 'Прочее';
+}
